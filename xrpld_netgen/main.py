@@ -442,6 +442,7 @@ def create_standalone_binary(
         f"{basedir}/{protocol}-{name}/start.sh",
         build_start_sh(basedir, protocol, name),  # noqa: E501
     )
+    print(f"{bcolors.BLUE}start.sh Path: {basedir}/{protocol}-{name}/start.sh{bcolors.END}")
     os.chmod(f"{basedir}/{protocol}-{name}/start.sh", 0o755)
     stop_sh_content: str = build_stop_sh(basedir, protocol, name, 0, 0, True)
     write_file(f"{basedir}/{protocol}-{name}/stop.sh", stop_sh_content)

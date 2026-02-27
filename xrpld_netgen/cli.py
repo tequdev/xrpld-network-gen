@@ -60,7 +60,8 @@ from xrpld_netgen.utils.misc import (
     run_command,
 )
 
-basedir = os.path.abspath(os.path.dirname(__file__))
+workspace_dir = os.path.join(os.path.dirname(__file__), "..", "workspace")
+basedir = os.path.abspath(workspace_dir)
 
 XAHAU_RELEASE: str = "2025.7.9-release+1951"
 XRPL_RELEASE: str = "2.6.1"
