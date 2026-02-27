@@ -44,6 +44,8 @@ jobs:
             --onefile \
             --name xrpld-netgen \
             --collect-all xrpld_netgen \
+            --collect-all xrpl \
+            --collect-all xrpld_publisher \
             xrpld_netgen/cli.py
 
       - name: Package
