@@ -9,20 +9,9 @@ permissions:
   contents: write
 
 jobs:
-  build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            target: linux-x64
-          - os: ubuntu-24.04-arm
-            target: linux-arm64
-          - os: macos-14
-            target: macos-arm64
-
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - uses: actions/checkout@v4
@@ -32,45 +21,11 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install dependencies
-        run: |
-          pip install poetry
-          poetry install
-          poetry run pip install pyinstaller
+      - name: Install Poetry
+        run: pip install poetry
 
-      - name: Build binary
-        run: |
-          poetry run pyinstaller \
-            --onefile \
-            --name xrpld-netgen \
-            --collect-all xrpld_netgen \
-            --collect-all xrpl \
-            --collect-all xrpld_publisher \
-            xrpld_netgen/cli.py
-
-      - name: Package
-        run: |
-          mkdir -p package/bin
-          cp dist/xrpld-netgen package/bin/
-          cd package
-          tar czf ../xrpld-netgen-${{ matrix.target }}.tar.gz .
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: xrpld-netgen-${{ matrix.target }}
-          path: xrpld-netgen-${{ matrix.target }}.tar.gz
-
-  release:
-    needs: build
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-
-    steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          merge-multiple: true
+      - name: Build package
+        run: poetry build
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -80,4 +35,4 @@ jobs:
           generate_release_notes: true
           draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}
-          files: xrpld-netgen-*.tar.gz
+          files: dist/*
