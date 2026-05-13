@@ -7,6 +7,7 @@ import shutil
 import json
 from typing import List, Any, Dict, Optional
 from dotenv import load_dotenv
+from datetime import datetime
 
 from xrpld_netgen.xrpld_cfg import gen_config, XrpldBuild
 from xrpld_netgen.utils.deploy_kit import (
@@ -61,6 +62,7 @@ from xrpld_netgen.faucet import (
 
 from xrpld_publisher.publisher import PublisherClient
 from xrpld_publisher.validator import ValidatorClient
+from xrpld_publisher.utils import from_date_to_effective, from_days_to_expiration
 
 load_dotenv()
 
@@ -267,6 +269,7 @@ def create_node_folders(
                 f"./vnode{i}/config:/opt/ripple/config",
                 f"./vnode{i}/log:/opt/ripple/log",
                 f"./vnode{i}/lib:/opt/ripple/lib",
+                f"./vnode{i}/db:/var/lib/xrpld/db",
             ],
             "networks": [f"{cluster_slug}-network"],
         }
@@ -645,7 +648,10 @@ def create_network(
         os.makedirs(f"{basedir}/{cluster_slug}-cluster/vl", exist_ok=True)
         for manifest in manifests:
             client.add_validator(manifest)
-        client.sign_unl(f"{basedir}/{cluster_slug}-cluster/vl/vl.json")
+
+        effective: int = from_date_to_effective(datetime.now().strftime("%m/%d/%Y"))
+        expiration: int = from_days_to_expiration(effective, 365)
+        client.sign_unl(f"{basedir}/{cluster_slug}-cluster/vl/vl.json", effective, expiration)
         shutil.copyfile(
             f"{package_dir}/deploykit/nginx.dockerfile",
             f"{basedir}/{cluster_slug}-cluster/vl/Dockerfile",
