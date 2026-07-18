@@ -580,9 +580,11 @@ def create_network(
             "environment": [
                 f"XRPLD_WS_URL=ws://vnode1:{ws_port}",
                 "DEFAULT_XRP_AMOUNT=1000",
+                "FAUCET_WALLET_PATH=/app/data/faucet-wallet.json",
                 f"PROTOCOL={protocol}",
             ],
             "ports": ["8080:8080"],
+            "volumes": ["./faucet/data:/app/data"],
             "depends_on": {
                 "vnode1": {"condition": "service_started"},
             },
@@ -593,6 +595,7 @@ def create_network(
         faucet_dir = f"{basedir}/{cluster_slug}-cluster/faucet"
         os.makedirs(faucet_dir, exist_ok=True)
         os.makedirs(f"{faucet_dir}/src", exist_ok=True)
+        os.makedirs(f"{faucet_dir}/data", exist_ok=True)
         write_file(
             f"{faucet_dir}/package.json",
             generate_faucet_package_json(),

@@ -57,13 +57,20 @@ def generate_faucet_server() -> str:
 import { Hono } from "hono";
 import { serve } from "@hono/node-server";
 import { Client, Wallet, dropsToXrp, xrpToDrops, ECDSA } from "xrpl";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 
 const RATE_LIMIT_MS = parseInt(process.env.RATE_LIMIT_MS || "10000");
 const DEFAULT_AMOUNT = process.env.DEFAULT_XRP_AMOUNT || "1000";
 const XRPLD_WS_URL = process.env.XRPLD_WS_URL || "ws://localhost:6006";
+const FAUCET_WALLET_PATH =
+  process.env.FAUCET_WALLET_PATH || "/app/data/faucet-wallet.json";
 const PORT = parseInt(process.env.PORT || "8080");
 
-const genesisWallet = Wallet.fromSecret('snoPBrXtMeMyMHUVTgbuqAfg1SUTb', { algorithm: ECDSA.secp256k1 });
+const genesisWallet = Wallet.fromSecret(
+  "snoPBrXtMeMyMHUVTgbuqAfg1SUTb",
+  { algorithm: ECDSA.secp256k1 }
+);
 
 let faucetWallet: Wallet;
 
@@ -88,15 +95,90 @@ async function connectWithRetry(client: Client): Promise<void> {
   throw new Error("Failed to connect to xrpld after maximum retries");
 }
 
-async function initFaucetWallet(client: Client): Promise<void> {
-  const xrpBalance = await client.getXrpBalance(genesisWallet.address);
+function loadOrCreateFaucetWallet(): { wallet: Wallet; created: boolean } {
+  try {
+    const stored = JSON.parse(readFileSync(FAUCET_WALLET_PATH, "utf8")) as {
+      seed?: unknown;
+      address?: unknown;
+    };
+    if (typeof stored.seed !== "string" || stored.seed.length === 0) {
+      throw new Error(`Invalid faucet wallet file: ${FAUCET_WALLET_PATH}`);
+    }
 
+    const wallet = Wallet.fromSeed(stored.seed);
+    if (stored.address !== wallet.address) {
+      throw new Error(`Faucet wallet address mismatch: ${FAUCET_WALLET_PATH}`);
+    }
+
+    return { wallet, created: false };
+  } catch (err: unknown) {
+    const errorCode =
+      typeof err === "object" && err !== null && "code" in err
+        ? (err as { code?: unknown }).code
+        : undefined;
+    if (errorCode !== "ENOENT") {
+      throw err;
+    }
+  }
+
+  const wallet = Wallet.generate();
+  if (!wallet.seed) {
+    throw new Error("Generated faucet wallet has no seed");
+  }
+
+  mkdirSync(dirname(FAUCET_WALLET_PATH), { recursive: true });
+  const temporaryPath = `${FAUCET_WALLET_PATH}.tmp`;
+  writeFileSync(
+    temporaryPath,
+    `${JSON.stringify({ address: wallet.address, seed: wallet.seed }, null, 2)}\n`,
+    { encoding: "utf8", mode: 0o600 }
+  );
+  renameSync(temporaryPath, FAUCET_WALLET_PATH);
+
+  return { wallet, created: true };
+}
+
+async function faucetAccountExists(
+  client: Client,
+  wallet: Wallet
+): Promise<boolean> {
+  try {
+    await client.getXrpBalance(wallet.address);
+    return true;
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    const errorCode =
+      typeof err === "object" && err !== null && "data" in err
+        ? (err as { data?: { error?: unknown } }).data?.error
+        : undefined;
+    if (
+      errorCode === "actNotFound" ||
+      message.includes("actNotFound") ||
+      message.includes("Account not found")
+    ) {
+      return false;
+    }
+    throw err;
+  }
+}
+
+async function initFaucetWallet(client: Client): Promise<void> {
+  console.log(`Genesis wallet address: ${genesisWallet.address}`);
+  const loadedWallet = loadOrCreateFaucetWallet();
+  faucetWallet = loadedWallet.wallet;
+  console.log(`Faucet wallet address: ${faucetWallet.address}`);
+
+  if (
+    !loadedWallet.created &&
+    (await faucetAccountExists(client, faucetWallet))
+  ) {
+    console.log("Reusing funded faucet wallet");
+    return;
+  }
+
+  const xrpBalance = await client.getXrpBalance(genesisWallet.address);
   const balanceDrops = BigInt(xrpToDrops(xrpBalance));
   const fundingDrops = (balanceDrops * BigInt(90)) / BigInt(100);
-
-  console.log(`Genesis wallet address: ${genesisWallet.address}`);
-  faucetWallet = Wallet.generate();
-  console.log(`Faucet wallet address: ${faucetWallet.address}`);
 
   const payment = {
     TransactionType: "Payment" as const,
@@ -174,7 +256,9 @@ app.post("/accounts", async (c) => {
 
       await client.submit(payment, { wallet: faucetWallet });
 
-      const xrpBalance = await client.getXrpBalance(targetAddress, { ledger_index: 'current' });
+      const xrpBalance = await client.getXrpBalance(targetAddress, {
+        ledger_index: "current",
+      });
 
       const response: Record<string, unknown> = {
         account: {
@@ -237,7 +321,8 @@ COPY package*.json ./
 
 RUN npm install
 
-COPY . .
+COPY tsconfig.json ./
+COPY src ./src
 
 EXPOSE 8080
 
@@ -250,13 +335,25 @@ def generate_faucet_test() -> str:
     return '''\
 import { app } from "./server";
 
+jest.mock("@hono/node-server", () => ({
+  serve: jest.fn(),
+}));
+
+jest.mock("node:fs", () => ({
+  mkdirSync: jest.fn(),
+  readFileSync: jest.fn(() => {
+    throw Object.assign(new Error("Wallet file not found"), { code: "ENOENT" });
+  }),
+  renameSync: jest.fn(),
+  writeFileSync: jest.fn(),
+}));
+
 jest.mock("xrpl", () => {
   const mockClient = {
     connect: jest.fn().mockResolvedValue(undefined),
     disconnect: jest.fn().mockResolvedValue(undefined),
-    getBalances: jest.fn().mockResolvedValue([
-      { currency: "XRP", value: "1000" },
-    ]),
+    getXrpBalance: jest.fn().mockResolvedValue("1000"),
+    submit: jest.fn().mockResolvedValue({}),
     submitAndWait: jest.fn().mockResolvedValue({
       result: { meta: "tesSUCCESS" },
     }),
@@ -265,9 +362,13 @@ jest.mock("xrpl", () => {
   return {
     Client: jest.fn(() => mockClient),
     Wallet: {
-      fromSeed: jest.fn(() => ({
+      fromSecret: jest.fn(() => ({
         address: "rGenesisAddress",
         seed: "sGenesisSecret",
+      })),
+      fromSeed: jest.fn(() => ({
+        address: "rNewTestAddress",
+        seed: "sNewTestSecret",
       })),
       generate: jest.fn(() => ({
         address: "rNewTestAddress",
@@ -275,6 +376,7 @@ jest.mock("xrpl", () => {
         classicAddress: "rNewTestAddress",
       })),
     },
+    ECDSA: { secp256k1: "secp256k1" },
     dropsToXrp: jest.fn((drops: string) =>
       (parseInt(drops) / 1000000).toString()
     ),
